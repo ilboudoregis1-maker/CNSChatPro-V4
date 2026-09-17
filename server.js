@@ -105,8 +105,9 @@ app.post("/api/contacts", auth, (req, res) => {
     db.get(
         `SELECT id, username, phone
          FROM users
-         WHERE phone = ?`,
-        [phone],
+         WHERE phone = ? OR username = ?
+         LIMIT 1`,
+        [phone, phone],
         (err, user) => {
             if (err) {
                 return res.status(500).json({
@@ -145,7 +146,7 @@ app.post("/api/contacts", auth, (req, res) => {
                     `INSERT OR REPLACE INTO contacts
                      (owner_id, contact_id, name, phone)
                      VALUES (?, ?, ?, ?)`,
-                    [req.user.id, user.id, name, user.phone],
+                    [req.user.id, user.id, name, phone],
                     insertErr => {
                         if (insertErr) {
                             return res.status(500).json({
@@ -159,7 +160,7 @@ app.post("/api/contacts", auth, (req, res) => {
                             registered: true,
                             username: user.username,
                             name: name,
-                            phone: user.phone
+                            phone: phone
                         });
                     }
                 );
