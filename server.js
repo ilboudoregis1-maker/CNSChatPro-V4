@@ -232,6 +232,112 @@ app.post("/api/register", async (req, res) => {
     }
 });
 
+
+app.put("/api/profile", (req, res) => {
+    try {
+        const auth = req.headers.authorization || "";
+        const token = auth.startsWith("Bearer ")
+            ? auth.substring(7)
+            : "";
+
+        if (!token) {
+            return res.status(401).json({
+                success: false,
+                message: "Connexion requise"
+            });
+        }
+
+        let decoded;
+        try {
+            decoded = jwt.verify(token, JWT_SECRET);
+        } catch (e) {
+            return res.status(401).json({
+                success: false,
+                message: "Session expirée"
+            });
+        }
+
+        const username = String(req.body.username || "").trim();
+
+        if (username.length < 2 || username.length > 30) {
+            return res.status(400).json({
+                success: false,
+                message: "Le pseudo doit contenir entre 2 et 30 caractères"
+            });
+        }
+
+        if (!/^[a-zA-ZÀ-ÿ0-9 _.-]+$/.test(username)) {
+            return res.status(400).json({
+                success: false,
+                message: "Pseudo invalide"
+            });
+        }
+
+        db.get(
+            `SELECT id FROM users
+             WHERE username = ? AND id != ?
+             LIMIT 1`,
+            [username, decoded.id],
+            (checkErr, existing) => {
+
+                if (checkErr) {
+                    return res.status(500).json({
+                        success: false,
+                        message: "Erreur serveur"
+                    });
+                }
+
+                if (existing) {
+                    return res.status(409).json({
+                        success: false,
+                        message: "Ce pseudo est déjà utilisé"
+                    });
+                }
+
+                db.run(
+                    `UPDATE users SET username = ? WHERE id = ?`,
+                    [username, decoded.id],
+                    function(err) {
+
+                        if (err) {
+                            console.error("PROFILE DB:", err.message);
+                            return res.status(500).json({
+                                success: false,
+                                message: "Impossible de modifier le profil"
+                            });
+                        }
+
+                        const newToken = jwt.sign(
+                            {
+                                id: decoded.id,
+                                username: username,
+                                phone: decoded.phone
+                            },
+                            JWT_SECRET,
+                            { expiresIn: "7d" }
+                        );
+
+                        res.json({
+                            success: true,
+                            message: "Profil mis à jour",
+                            token: newToken,
+                            username: username,
+                            phone: decoded.phone
+                        });
+                    }
+                );
+            }
+        );
+
+    } catch (e) {
+        console.error("PROFILE:", e.message);
+        res.status(500).json({
+            success: false,
+            message: "Erreur serveur"
+        });
+    }
+});
+
 app.post("/api/login", (req, res) => {
     const phone = normalizePhone(req.body.phone);
     const password = String(req.body.password || "");
