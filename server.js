@@ -53,6 +53,83 @@ db.serialize(() => {
             );
         };
 
+        const backfillPhones = () => {
+            db.all(
+                `SELECT id, username, phone
+                 FROM users
+                 WHERE phone IS NULL OR TRIM(phone) = ''`,
+                (rowsErr, rows) => {
+                    if (rowsErr) {
+                        console.error("DB PHONE BACKFILL:", rowsErr.message);
+                        createIndex();
+                        return;
+                    }
+
+                    if (!rows.length) {
+                        console.log("DB PHONE BACKFILL: aucun compte à corriger");
+                        createIndex();
+                        return;
+                    }
+
+                    let pending = rows.length;
+
+                    rows.forEach(user => {
+                        const raw = String(user.username || "").trim();
+
+                        let phone = raw.replace(/[\\s().-]/g, "");
+
+                        if (phone.startsWith("00226")) {
+                            phone = "+" + phone.substring(2);
+                        } else if (phone.startsWith("226") && !phone.startsWith("+")) {
+                            phone = "+" + phone;
+                        } else if (/^\\d{8}$/.test(phone)) {
+                            phone = "+226" + phone;
+                        }
+
+                        if (/^\\+226\\d{8}$/.test(phone)) {
+                            db.run(
+                                `UPDATE users SET phone = ? WHERE id = ?`,
+                                [phone, user.id],
+                                updateErr => {
+                                    if (updateErr) {
+                                        console.error(
+                                            "DB PHONE UPDATE:",
+                                            user.id,
+                                            updateErr.message
+                                        );
+                                    } else {
+                                        console.log(
+                                            "DB PHONE BACKFILL:",
+                                            user.id,
+                                            phone
+                                        );
+                                    }
+
+                                    pending--;
+
+                                    if (pending === 0) {
+                                        createIndex();
+                                    }
+                                }
+                            );
+                        } else {
+                            console.log(
+                                "DB PHONE BACKFILL: numéro ignoré",
+                                user.id,
+                                raw
+                            );
+
+                            pending--;
+
+                            if (pending === 0) {
+                                createIndex();
+                            }
+                        }
+                    });
+                }
+            );
+        };
+
         if (!hasPhone) {
             db.run(`ALTER TABLE users ADD COLUMN phone TEXT`, alterErr => {
                 if (alterErr) {
@@ -60,11 +137,11 @@ db.serialize(() => {
                 } else {
                     console.log("DB MIGRATION: colonne phone ajoutée");
                 }
-                createIndex();
+                backfillPhones();
             });
         } else {
             console.log("DB CHECK: colonne phone présente");
-            createIndex();
+            backfillPhones();
         }
     });
 });
