@@ -79,9 +79,23 @@ app.get("/health", (req, res) => {
     });
 });
 
+function normalizePhone(phone) {
+    let p = String(phone || "").trim().replace(/[\s().-]/g, "");
+
+    if (p.startsWith("00226")) {
+        p = "+" + p.substring(2);
+    } else if (p.startsWith("226") && !p.startsWith("+")) {
+        p = "+" + p;
+    } else if (/^\d{8}$/.test(p)) {
+        p = "+226" + p;
+    }
+
+    return p;
+}
+
 app.post("/api/register", async (req, res) => {
     try {
-        const phone = String(req.body.phone || "").trim();
+        const phone = normalizePhone(req.body.phone);
         const password = String(req.body.password || "");
 
         if (!phone || !password) {
@@ -91,40 +105,90 @@ app.post("/api/register", async (req, res) => {
             });
         }
 
-        const hash = await bcrypt.hash(password, 10);
+        if (!/^\+226\d{8}$/.test(phone)) {
+            return res.status(400).json({
+                success: false,
+                message: "Numéro de téléphone invalide"
+            });
+        }
 
-        db.run(
-            `INSERT INTO users(username, phone, password)
-             VALUES(?,?,?)`,
-            [phone, phone, hash],
-            function(err) {
-                if (err) {
+        if (password.length < 4) {
+            return res.status(400).json({
+                success: false,
+                message: "Le mot de passe doit contenir au moins 4 caractères"
+            });
+        }
+
+        db.get(
+            `SELECT id FROM users
+             WHERE phone = ? OR username = ?
+             LIMIT 1`,
+            [phone, phone],
+            async (checkErr, existing) => {
+
+                if (checkErr) {
+                    return res.status(500).json({
+                        success: false,
+                        message: "Erreur de vérification du compte"
+                    });
+                }
+
+                if (existing) {
                     return res.status(409).json({
                         success: false,
                         message: "Ce numéro est déjà utilisé"
                     });
                 }
 
-                const token = jwt.sign(
-                    {
-                        id: this.lastID,
-                        username: phone,
-                        phone: phone
-                    },
-                    JWT_SECRET,
-                    { expiresIn: "7d" }
-                );
+                const hash = await bcrypt.hash(password, 10);
 
-                res.json({
-                    success: true,
-                    message: "Compte créé",
-                    token,
-                    username: phone,
-                    phone
-                });
+                db.run(
+                    `INSERT INTO users(username, phone, password)
+                     VALUES(?,?,?)`,
+                    [phone, phone, hash],
+                    function(err) {
+
+                        if (err) {
+                            console.error("REGISTER DB:", err.message);
+
+                            if (err.message.includes("UNIQUE")) {
+                                return res.status(409).json({
+                                    success: false,
+                                    message: "Ce numéro est déjà utilisé"
+                                });
+                            }
+
+                            return res.status(500).json({
+                                success: false,
+                                message: "Impossible de créer le compte"
+                            });
+                        }
+
+                        const token = jwt.sign(
+                            {
+                                id: this.lastID,
+                                username: phone,
+                                phone: phone
+                            },
+                            JWT_SECRET,
+                            { expiresIn: "7d" }
+                        );
+
+                        res.json({
+                            success: true,
+                            message: "Compte créé",
+                            token,
+                            username: phone,
+                            phone
+                        });
+                    }
+                );
             }
         );
-    } catch {
+
+    } catch (e) {
+        console.error("REGISTER:", e.message);
+
         res.status(500).json({
             success: false,
             message: "Erreur serveur"
@@ -133,7 +197,7 @@ app.post("/api/register", async (req, res) => {
 });
 
 app.post("/api/login", (req, res) => {
-    const phone = String(req.body.phone || "").trim();
+    const phone = normalizePhone(req.body.phone);
     const password = String(req.body.password || "");
 
     db.get(
