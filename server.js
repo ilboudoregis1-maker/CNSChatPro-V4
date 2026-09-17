@@ -168,6 +168,17 @@ app.post("/api/contacts", auth, (req, res) => {
     );
 });
 
+
+app.get("/download/CNSChatPro-V4.apk", (req, res) => {
+    const apk = path.join(__dirname, "CNSChatPro-V4.apk");
+
+    res.download(apk, "CNSChatPro-V4.apk", err => {
+        if (err) {
+            console.error("APK DOWNLOAD:", err.message);
+        }
+    });
+});
+
 app.get("/", (req, res) => {
     res.json({
         success: true,
