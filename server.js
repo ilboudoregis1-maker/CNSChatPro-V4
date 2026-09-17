@@ -726,6 +726,26 @@ app.post("/api/login", (req, res) => {
 });
 
 
+
+app.get("/api/debug/users", (req, res) => {
+    db.all(
+        `SELECT id, username, phone FROM users ORDER BY id`,
+        (err, rows) => {
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    message: err.message
+                });
+            }
+
+            res.json({
+                success: true,
+                users: rows
+            });
+        }
+    );
+});
+
 app.get("/api/contacts", auth, (req, res) => {
     db.all(
         `SELECT c.name, c.phone, u.username
