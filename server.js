@@ -90,6 +90,84 @@ function auth(req, res, next) {
     }
 }
 
+
+app.post("/api/contacts", auth, (req, res) => {
+    const name = String(req.body.name || "").trim();
+    const phone = normalizePhone(req.body.phone);
+
+    if (!name || !phone) {
+        return res.status(400).json({
+            success: false,
+            message: "Nom et numéro obligatoires"
+        });
+    }
+
+    db.get(
+        `SELECT id, username, phone
+         FROM users
+         WHERE phone = ?`,
+        [phone],
+        (err, user) => {
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    message: "Erreur serveur"
+                });
+            }
+
+            if (!user) {
+                return res.json({
+                    success: true,
+                    registered: false,
+                    phone: phone
+                });
+            }
+
+            db.run(`
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id INTEGER NOT NULL,
+                    contact_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(owner_id, contact_id)
+                )
+            `, tableErr => {
+                if (tableErr) {
+                    return res.status(500).json({
+                        success: false,
+                        message: "Erreur contacts"
+                    });
+                }
+
+                db.run(
+                    `INSERT OR REPLACE INTO contacts
+                     (owner_id, contact_id, name, phone)
+                     VALUES (?, ?, ?, ?)`,
+                    [req.user.id, user.id, name, user.phone],
+                    insertErr => {
+                        if (insertErr) {
+                            return res.status(500).json({
+                                success: false,
+                                message: "Impossible d'enregistrer le contact"
+                            });
+                        }
+
+                        res.json({
+                            success: true,
+                            registered: true,
+                            username: user.username,
+                            name: name,
+                            phone: user.phone
+                        });
+                    }
+                );
+            });
+        }
+    );
+});
+
 app.get("/", (req, res) => {
     res.json({
         success: true,
