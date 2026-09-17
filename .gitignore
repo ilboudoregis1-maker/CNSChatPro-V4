@@ -1,0 +1,6 @@
+# Base SQLite locale
+cns_chat_pro.db
+*.db
+
+# Dépendances Node.js
+node_modules/

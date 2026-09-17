@@ -2,36 +2,154 @@ const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
+const { createClient } = require("@libsql/client");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || "CNS_CHAT_PRO_V4_SECRET_CHANGE_ME";
-const DB = path.join(__dirname, "cns_chat_pro.db");
 
 app.use(cors());
 app.use(express.json());
 
-const db = new sqlite3.Database(DB);
+if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) {
+    console.error("ERREUR: TURSO_DATABASE_URL ou TURSO_AUTH_TOKEN manquant");
+}
 
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL UNIQUE,
-        phone TEXT UNIQUE,
-        password TEXT NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )`);
+const turso = createClient({
+    url: process.env.TURSO_DATABASE_URL || "libsql://nom-cns-chat-pro-cani.aws-us-west-2.turso.io",
+    authToken: process.env.TURSO_AUTH_TOKEN || ""
+});
 
-    db.run(`CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
-        receiver TEXT NOT NULL,
-        message TEXT NOT NULL,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    )`);
+/*
+ * Compatibilité avec l'ancien code SQLite.
+ * Les routes existantes peuvent continuer à utiliser :
+ * db.get()
+ * db.all()
+ * db.run()
+ */
+const db = {
+    run(sql, params, callback) {
+        if (typeof params === "function") {
+            callback = params;
+            params = [];
+        }
 
+        params = params || [];
+
+        turso.execute({
+            sql,
+            args: params
+        }).then(result => {
+            const context = {
+                lastID: result.lastInsertRowid != null
+                    ? Number(result.lastInsertRowid)
+                    : 0,
+                changes: result.rowsAffected != null
+                    ? Number(result.rowsAffected)
+                    : 0
+            };
+
+            if (callback) {
+                callback.call(context, null);
+            }
+        }).catch(err => {
+            if (callback) {
+                callback.call({}, err);
+            } else {
+                console.error("DB RUN:", err.message);
+            }
+        });
+    },
+
+    get(sql, params, callback) {
+        if (typeof params === "function") {
+            callback = params;
+            params = [];
+        }
+
+        params = params || [];
+
+        turso.execute({
+            sql,
+            args: params
+        }).then(result => {
+            const row = result.rows && result.rows.length
+                ? result.rows[0]
+                : undefined;
+
+            if (callback) {
+                callback(null, row);
+            }
+        }).catch(err => {
+            if (callback) {
+                callback(err);
+            } else {
+                console.error("DB GET:", err.message);
+            }
+        });
+    },
+
+    all(sql, params, callback) {
+        if (typeof params === "function") {
+            callback = params;
+            params = [];
+        }
+
+        params = params || [];
+
+        turso.execute({
+            sql,
+            args: params
+        }).then(result => {
+            const rows = result.rows || [];
+
+            if (callback) {
+                callback(null, rows);
+            }
+        }).catch(err => {
+            if (callback) {
+                callback(err, []);
+            } else {
+                console.error("DB ALL:", err.message);
+            }
+        });
+    },
+
+    exec(sql, callback) {
+        turso.executeMultiple(sql)
+            .then(() => {
+                if (callback) callback(null);
+            })
+            .catch(err => {
+                if (callback) callback(err);
+                else console.error("DB EXEC:", err.message);
+            });
+    },
+
+    serialize(fn) {
+        fn();
+    }
+};
+
+/* Création des tables principales */
+db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    phone TEXT UNIQUE,
+    password TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)`);
+
+db.run(`CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    receiver TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+)`);
+
+/* Migration du numéro de téléphone */
+setTimeout(() => {
     db.all(`PRAGMA table_info(users)`, (err, columns) => {
         if (err) {
             console.error("DB CHECK USERS:", err.message);
@@ -76,17 +194,17 @@ db.serialize(() => {
                     rows.forEach(user => {
                         const raw = String(user.username || "").trim();
 
-                        let phone = raw.replace(/[\\s().-]/g, "");
+                        let phone = raw.replace(/[\s().-]/g, "");
 
                         if (phone.startsWith("00226")) {
                             phone = "+" + phone.substring(2);
                         } else if (phone.startsWith("226") && !phone.startsWith("+")) {
                             phone = "+" + phone;
-                        } else if (/^\\d{8}$/.test(phone)) {
+                        } else if (/^\d{8}$/.test(phone)) {
                             phone = "+226" + phone;
                         }
 
-                        if (/^\\+226\\d{8}$/.test(phone)) {
+                        if (/^\+226\d{8}$/.test(phone)) {
                             db.run(
                                 `UPDATE users SET phone = ? WHERE id = ?`,
                                 [phone, user.id],
@@ -131,20 +249,24 @@ db.serialize(() => {
         };
 
         if (!hasPhone) {
-            db.run(`ALTER TABLE users ADD COLUMN phone TEXT`, alterErr => {
-                if (alterErr) {
-                    console.error("DB ADD PHONE:", alterErr.message);
-                } else {
-                    console.log("DB MIGRATION: colonne phone ajoutée");
+            db.run(
+                `ALTER TABLE users ADD COLUMN phone TEXT`,
+                alterErr => {
+                    if (alterErr) {
+                        console.error("DB ADD PHONE:", alterErr.message);
+                    } else {
+                        console.log("DB MIGRATION: colonne phone ajoutée");
+                    }
+
+                    backfillPhones();
                 }
-                backfillPhones();
-            });
+            );
         } else {
             console.log("DB CHECK: colonne phone présente");
             backfillPhones();
         }
     });
-});
+}, 1000);
 
 function auth(req, res, next) {
     const h = req.headers.authorization || "";
