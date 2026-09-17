@@ -630,6 +630,31 @@ app.post("/api/login", (req, res) => {
     );
 });
 
+
+app.get("/api/contacts", auth, (req, res) => {
+    db.all(
+        `SELECT c.name, c.phone, u.username
+         FROM contacts c
+         JOIN users u ON u.id = c.contact_id
+         WHERE c.owner_id = ?
+         ORDER BY c.id DESC`,
+        [req.user.id],
+        (err, rows) => {
+            if (err) {
+                return res.status(500).json({
+                    success: false,
+                    message: "Erreur serveur"
+                });
+            }
+
+            res.json({
+                success: true,
+                contacts: rows
+            });
+        }
+    );
+});
+
 app.get("/api/messages", auth, (req, res) => {
     const user1 = String(req.query.user1 || "").trim();
     const user2 = String(req.query.user2 || "").trim();
