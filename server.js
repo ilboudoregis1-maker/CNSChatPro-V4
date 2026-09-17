@@ -172,7 +172,13 @@ app.post("/api/contacts", auth, (req, res) => {
 app.get("/download/CNSChatPro-V4.apk", (req, res) => {
     const apk = path.join(__dirname, "CNSChatPro-V4.apk");
 
-    res.download(apk, "CNSChatPro-V4.apk", err => {
+    res.sendFile(apk, {
+        headers: {
+            "Content-Type": "application/vnd.android.package-archive",
+            "Content-Disposition": 'attachment; filename="CNSChatPro-V4.apk"',
+            "Cache-Control": "public, max-age=3600"
+        }
+    }, err => {
         if (err) {
             console.error("APK DOWNLOAD:", err.message);
         }
