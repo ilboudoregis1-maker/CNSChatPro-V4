@@ -31,6 +31,42 @@ db.serialize(() => {
         message TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )`);
+
+    db.all(`PRAGMA table_info(users)`, (err, columns) => {
+        if (err) {
+            console.error("DB CHECK USERS:", err.message);
+            return;
+        }
+
+        const hasPhone = columns.some(c => c.name === "phone");
+
+        const createIndex = () => {
+            db.run(
+                `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone)`,
+                indexErr => {
+                    if (indexErr) {
+                        console.error("DB PHONE INDEX:", indexErr.message);
+                    } else {
+                        console.log("DB READY: users.phone OK");
+                    }
+                }
+            );
+        };
+
+        if (!hasPhone) {
+            db.run(`ALTER TABLE users ADD COLUMN phone TEXT`, alterErr => {
+                if (alterErr) {
+                    console.error("DB ADD PHONE:", alterErr.message);
+                } else {
+                    console.log("DB MIGRATION: colonne phone ajoutée");
+                }
+                createIndex();
+            });
+        } else {
+            console.log("DB CHECK: colonne phone présente");
+            createIndex();
+        }
+    });
 });
 
 function auth(req, res, next) {
