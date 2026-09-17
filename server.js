@@ -338,6 +338,174 @@ app.put("/api/profile", (req, res) => {
     }
 });
 
+
+app.get("/api/profile", (req, res) => {
+    try {
+        const auth = req.headers.authorization || "";
+
+        if (!auth.startsWith("Bearer ")) {
+            return res.status(401).json({
+                success: false,
+                message: "Non authentifié"
+            });
+        }
+
+        const token = auth.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        db.get(
+            `SELECT id, username, phone, created_at
+             FROM users
+             WHERE id = ?`,
+            [decoded.id],
+            (err, user) => {
+                if (err || !user) {
+                    return res.status(404).json({
+                        success: false,
+                        message: "Utilisateur introuvable"
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    id: user.id,
+                    username: user.username,
+                    phone: user.phone,
+                    created_at: user.created_at
+                });
+            }
+        );
+    } catch (e) {
+        return res.status(401).json({
+            success: false,
+            message: "Session invalide"
+        });
+    }
+});
+
+app.put("/api/profile", (req, res) => {
+    try {
+        const auth = req.headers.authorization || "";
+
+        if (!auth.startsWith("Bearer ")) {
+            return res.status(401).json({
+                success: false,
+                message: "Non authentifié"
+            });
+        }
+
+        const token = auth.substring(7);
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        const newUsername =
+            String(req.body.username || "").trim();
+
+        if (!newUsername) {
+            return res.status(400).json({
+                success: false,
+                message: "Pseudo requis"
+            });
+        }
+
+        if (newUsername.length < 3 || newUsername.length > 30) {
+            return res.status(400).json({
+                success: false,
+                message: "Le pseudo doit contenir entre 3 et 30 caractères"
+            });
+        }
+
+        if (!/^[a-zA-Z0-9_ .-]+$/.test(newUsername)) {
+            return res.status(400).json({
+                success: false,
+                message: "Pseudo invalide"
+            });
+        }
+
+        db.get(
+            `SELECT id FROM users
+             WHERE username = ? AND id != ?
+             LIMIT 1`,
+            [newUsername, decoded.id],
+            (checkErr, existing) => {
+
+                if (checkErr) {
+                    return res.status(500).json({
+                        success: false,
+                        message: "Erreur de vérification"
+                    });
+                }
+
+                if (existing) {
+                    return res.status(409).json({
+                        success: false,
+                        message: "Ce pseudo est déjà utilisé"
+                    });
+                }
+
+                db.run(
+                    `UPDATE users
+                     SET username = ?
+                     WHERE id = ?`,
+                    [newUsername, decoded.id],
+                    function(err) {
+
+                        if (err) {
+                            console.error(
+                                "PROFILE DB:",
+                                err.message
+                            );
+
+                            return res.status(500).json({
+                                success: false,
+                                message: "Impossible de modifier le pseudo"
+                            });
+                        }
+
+                        db.get(
+                            `SELECT id, username, phone
+                             FROM users
+                             WHERE id = ?`,
+                            [decoded.id],
+                            (selectErr, user) => {
+
+                                if (selectErr || !user) {
+                                    return res.status(500).json({
+                                        success: false,
+                                        message: "Erreur après modification"
+                                    });
+                                }
+
+                                const newToken = jwt.sign(
+                                    {
+                                        id: user.id,
+                                        username: user.username,
+                                        phone: user.phone
+                                    },
+                                    JWT_SECRET,
+                                    { expiresIn: "7d" }
+                                );
+
+                                res.json({
+                                    success: true,
+                                    message: "Profil mis à jour",
+                                    token: newToken,
+                                    username: user.username,
+                                    phone: user.phone
+                                });
+                            }
+                        );
+                    }
+                );
+            }
+        );
+    } catch (e) {
+        return res.status(401).json({
+            success: false,
+            message: "Session invalide"
+        });
+    }
+});
+
 app.post("/api/login", (req, res) => {
     const phone = normalizePhone(req.body.phone);
     const password = String(req.body.password || "");
